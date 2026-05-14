@@ -6191,7 +6191,7 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.cursor < len(h.flatItems) {
 			item := h.flatItems[h.cursor]
 			if item.Type == session.ItemTypeSession && item.Session != nil &&
-				(session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
+				(session.IsClaudeCompatible(item.Session.Tool) || session.IsCodexCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				h.mcpDialog.SetSize(h.width, h.height)
 				if err := h.mcpDialog.Show(item.Session.ProjectPath, item.Session.ID, item.Session.Tool); err != nil {
 					h.setError(err)
@@ -10667,7 +10667,7 @@ func (h *Home) renderHelpBarMinimal() string {
 					contextKeys += " " + forkRendered
 				}
 			}
-			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || session.IsCodexCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				mcpRendered := renderKeys(mcpKey)
 				if mcpRendered != "" {
 					contextKeys += " " + mcpRendered
@@ -10767,7 +10767,7 @@ func (h *Home) renderHelpBarCompact() string {
 					contextHints = append(contextHints, h.helpKeyShort(key, "Fork"))
 				}
 			}
-			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || session.IsCodexCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				if key := h.actionKey(hotkeyMCPManager); key != "" {
 					contextHints = append(contextHints, h.helpKeyShort(key, "MCP"))
 				}
@@ -10946,7 +10946,7 @@ func (h *Home) renderHelpBarFull() string {
 				}
 			}
 			// Show MCP Manager and preview mode toggle for Claude and Gemini sessions
-			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
+			if item.Session != nil && (session.IsClaudeCompatible(item.Session.Tool) || session.IsCodexCompatible(item.Session.Tool) || item.Session.Tool == "gemini") {
 				if mcpKey != "" {
 					primaryHints = append(primaryHints, h.helpKey(mcpKey, "MCP"))
 				}

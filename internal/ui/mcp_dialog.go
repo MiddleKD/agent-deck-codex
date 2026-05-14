@@ -197,6 +197,34 @@ func (m *MCPDialog) Show(projectPath string, sessionID string, tool string) erro
 				})
 			}
 		}
+	} else if session.IsCodexCompatible(tool) {
+		// Codex: Only LOCAL scope, attached from ./.codex/config.toml
+		localAttachedNames := make(map[string]bool)
+		mcpInfo := session.GetCodexMCPInfo(projectPath)
+		for _, name := range mcpInfo.Local() {
+			localAttachedNames[name] = true
+		}
+
+		// Build attached/available lists for LOCAL only
+		for _, name := range allNames {
+			item := itemsMap[name]
+			if localAttachedNames[name] {
+				m.localAttached = append(m.localAttached, item)
+			} else {
+				m.localAvailable = append(m.localAvailable, item)
+			}
+		}
+
+		// Add orphan LOCAL MCPs (attached in .codex/config.toml but not in config.toml pool)
+		for name := range localAttachedNames {
+			if !poolNames[name] {
+				m.localAttached = append(m.localAttached, MCPItem{
+					Name:        name,
+					Description: "(not in config.toml)",
+					IsOrphan:    true,
+				})
+			}
+		}
 	} else {
 		// Claude: Load LOCAL attached from .mcp.json
 		localAttachedNames := make(map[string]bool)
@@ -289,9 +317,11 @@ func (m *MCPDialog) Show(projectPath string, sessionID string, tool string) erro
 
 	m.visible = true
 	m.projectPath = projectPath
-	// Gemini only has global scope, Claude uses configured default
+	// Gemini only has global scope, Codex only has local, Claude uses configured default
 	if tool == "gemini" {
 		m.scope = MCPScopeGlobal
+	} else if session.IsCodexCompatible(tool) {
+		m.scope = MCPScopeLocal
 	} else {
 		switch session.GetMCPDefaultScope() {
 		case "global":
@@ -676,6 +706,8 @@ func (m *MCPDialog) View() string {
 	title := "MCP Manager"
 	if m.tool == "gemini" {
 		title = "MCP Manager (Gemini)"
+	} else if session.IsCodexCompatible(m.tool) {
+		title = "MCP Manager (Codex)"
 	}
 
 	// Scope tabs - Gemini only has global
@@ -684,6 +716,10 @@ func (m *MCPDialog) View() string {
 		// Gemini: Only show GLOBAL (centered)
 		globalTab := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).Render("[GLOBAL]")
 		tabs = "──────────────── " + globalTab + " ────────────────"
+	} else if session.IsCodexCompatible(m.tool) {
+		// Codex: Only show LOCAL (centered)
+		localTab := lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).Render("[LOCAL]")
+		tabs = "──────────────── " + localTab + " ────────────────"
 	} else {
 		// Claude: Show LOCAL/GLOBAL/USER tabs
 		localTab := "LOCAL"
@@ -746,6 +782,8 @@ func (m *MCPDialog) View() string {
 	var scopeDesc string
 	if m.tool == "gemini" {
 		scopeDesc = DimStyle.Render("Writes to: ~/.gemini/settings.json")
+	} else if session.IsCodexCompatible(m.tool) {
+		scopeDesc = DimStyle.Render("Writes to: ./.codex/config.toml")
 	} else {
 		switch m.scope {
 		case MCPScopeLocal:
@@ -771,6 +809,8 @@ func (m *MCPDialog) View() string {
 	hintStyle := lipgloss.NewStyle().Foreground(ColorComment)
 	var hint string
 	if m.tool == "gemini" {
+		hint = hintStyle.Render("←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")
+	} else if session.IsCodexCompatible(m.tool) {
 		hint = hintStyle.Render("←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")
 	} else {
 		hint = hintStyle.Render("Tab scope │ ←→ column │ Type jump │ Space move │ Enter apply │ Esc cancel")

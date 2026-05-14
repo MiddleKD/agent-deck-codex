@@ -3819,7 +3819,7 @@ func (i *Instance) prepareRestartMCPConfig() {
 	skipRegen := i.SkipMCPRegenerate
 	i.SkipMCPRegenerate = false
 
-	if IsClaudeCompatible(i.Tool) && !skipRegen {
+	if (IsClaudeCompatible(i.Tool) || IsCodexCompatible(i.Tool)) && !skipRegen {
 		if err := i.regenerateMCPConfig(); err != nil {
 			mcpLog.Warn("mcp_config_regen_failed", slog.String("error", err.Error()))
 		}
@@ -5650,6 +5650,12 @@ func (i *Instance) regenerateMCPConfig() error {
 	mcpInfo := GetMCPInfo(i.ProjectPath)
 	if mcpInfo == nil {
 		return nil // No MCP info, nothing to regenerate
+	}
+
+	// Codex-compatible tools get TOML config in ./.codex/config.toml
+	if IsCodexCompatible(i.Tool) {
+		allMCPs := mcpInfo.AllNames()
+		return WriteCodexConfig(i.ProjectPath, allMCPs)
 	}
 
 	switch GetMCPDefaultScope() {

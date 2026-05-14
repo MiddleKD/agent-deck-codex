@@ -8,10 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/asheshgoplani/agent-deck/internal/logging"
 	"github.com/asheshgoplani/agent-deck/internal/mcppool"
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	codexMCPMarkerBegin = "# BEGIN AGENTDECK CODEX MCP"
+	codexMCPMarkerEnd   = "# END AGENTDECK CODEX MCP"
 )
 
 var mcpCatLog = logging.ForComponent(logging.CompMCP)
@@ -604,4 +611,175 @@ func GetUserMCPNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// getCodexConfigPath returns the Codex config.toml path for a project.
+// Resolves to ./.codex/config.toml relative to the project directory.
+func getCodexConfigPath(projectPath string) string {
+	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+		return filepath.Join(codexHome, ".codex", "config.toml")
+	}
+	return filepath.Join(projectPath, ".codex", "config.toml")
+}
+
+// readFileOrEmpty reads a file and returns its contents, or "" if it doesn't exist.
+func readFileOrEmpty(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+
+// GetCodexMCPInfo reads ./.codex/config.toml and returns MCPInfo with
+// LocalMCPs populated from enabled MCP names between the AGENTDECK markers.
+func GetCodexMCPInfo(projectPath string) *MCPInfo {
+	configPath := getCodexConfigPath(projectPath)
+	content, _ := readFileOrEmpty(configPath)
+	if content == "" {
+		return &MCPInfo{}
+	}
+	begin := strings.Index(content, codexMCPMarkerBegin)
+	if begin == -1 {
+		return &MCPInfo{}
+	}
+	rest := content[begin+len(codexMCPMarkerBegin):]
+	end := strings.Index(rest, codexMCPMarkerEnd)
+	if end == -1 {
+		return &MCPInfo{}
+	}
+	block := rest[:end]
+
+	var parsed struct {
+		MCPServers map[string]map[string]interface{} `toml:"mcp_servers"`
+	}
+	if _, err := toml.Decode(block, &parsed); err != nil {
+		return &MCPInfo{}
+	}
+
+	localMCPs := make([]LocalMCP, 0, len(parsed.MCPServers))
+	for name := range parsed.MCPServers {
+		localMCPs = append(localMCPs, LocalMCP{Name: name})
+	}
+	sort.Slice(localMCPs, func(i, j int) bool {
+		return localMCPs[i].Name < localMCPs[j].Name
+	})
+	return &MCPInfo{LocalMCPs: localMCPs}
+}
+
+// WriteCodexConfig writes enabled MCP servers to the project-local .codex/config.toml.
+// It uses marker-based block injection (same pattern as codex-hooks) so existing
+// config keys (model, projects, etc.) are preserved.
+//
+// Codex only supports stdio and streamable_http transports — no Unix socket pooling.
+func WriteCodexConfig(projectPath string, enabledNames []string) error {
+	if !GetManageMCPJson() {
+		mcpCatLog.Debug("codex_config_management_disabled", slog.String("project", projectPath))
+		return nil
+	}
+
+	configPath := getCodexConfigPath(projectPath)
+	availableMCPs := GetAvailableMCPs()
+
+	// Build servers map
+	serversMap := make(map[string]interface{})
+	for _, name := range enabledNames {
+		def, ok := availableMCPs[name]
+		if !ok {
+			continue
+		}
+
+		entry := make(map[string]interface{})
+
+		if def.URL != "" {
+			// HTTP/SSE transport
+			if def.HasAutoStartServer() {
+				if err := StartHTTPServer(name, &def); err != nil {
+					mcpCatLog.Warn("http_server_start_failed", slog.String("mcp", name), slog.String("scope", "codex"), slog.Any("error", err))
+				}
+			}
+			transport := def.Transport
+			if transport == "" {
+				transport = "streamable_http"
+			}
+			entry["transport"] = transport
+			entry["url"] = def.URL
+			if len(def.Headers) > 0 {
+				entry["headers"] = def.Headers
+			}
+			mcpCatLog.Info("codex_transport_http", slog.String("mcp", name), slog.String("transport", transport), slog.String("url", def.URL))
+		} else {
+			// stdio transport — always use original command, no socket pooling
+			entry["command"] = def.Command
+			if len(def.Args) > 0 {
+				entry["args"] = def.Args
+			}
+			if len(def.Env) > 0 {
+				entry["env"] = def.Env
+			}
+			mcpCatLog.Info("codex_transport_stdio", slog.String("mcp", name))
+		}
+
+		serversMap[name] = entry
+	}
+
+	// Serialize to TOML
+	encoded, err := codexEncodeValue(map[string]interface{}{"mcp_servers": serversMap})
+	if err != nil {
+		return fmt.Errorf("failed to encode codex config: %w", err)
+	}
+	mcpBlock := string(encoded)
+
+	// Read existing content
+	content, _ := readFileOrEmpty(configPath)
+
+	// Inject between markers
+	begin := strings.Index(content, codexMCPMarkerBegin)
+	if begin != -1 {
+		endRel := strings.Index(content[begin:], codexMCPMarkerEnd)
+		if endRel != -1 {
+			end := begin + endRel + len(codexMCPMarkerEnd)
+			content = content[:begin] + codexMCPMarkerBegin + "\n" + mcpBlock + codexMCPMarkerEnd + "\n" + content[end:]
+		} else {
+			content = content[:begin] + codexMCPMarkerBegin + "\n" + mcpBlock + codexMCPMarkerEnd + "\n" + content[begin:]
+		}
+	} else {
+		if trimmed := strings.TrimSpace(content); trimmed != "" {
+			content = strings.TrimRight(codexMCPMarkerBegin+"\n"+mcpBlock+codexMCPMarkerEnd+"\n", "\n") + "\n\n" + trimmed + "\n"
+		} else {
+			content = codexMCPMarkerBegin + "\n" + mcpBlock + codexMCPMarkerEnd + "\n"
+		}
+	}
+
+	// Ensure .codex/ directory exists
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create .codex directory: %w", err)
+	}
+
+	// Atomic write
+	tmpPath := configPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("failed to write codex config: %w", err)
+	}
+	if err := os.Rename(tmpPath, configPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to save codex config: %w", err)
+	}
+
+	return nil
+}
+
+// codexEncodeValue serializes a map to TOML using BurntSushi/toml Encoder.
+func codexEncodeValue(data map[string]interface{}) ([]byte, error) {
+	var buf strings.Builder
+	enc := toml.NewEncoder(&buf)
+	if err := enc.Encode(data); err != nil {
+		return nil, err
+	}
+	return []byte(buf.String()), nil
 }
