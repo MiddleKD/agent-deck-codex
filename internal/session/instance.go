@@ -1135,7 +1135,10 @@ func (i *Instance) getCodexHomeDir() string {
 	if i == nil {
 		return getCodexHomeDir()
 	}
-	return getCodexHomeDirForCommand(i.resolveCodexCommand(i.Command))
+	if home := codexHomeFromCommand(i.resolveCodexCommand(i.Command)); home != "" {
+		return home
+	}
+	return GetCodexHomeDirForInstance(i)
 }
 
 // Codex stores sessions in ~/.codex/sessions/YYYY/MM/DD/*.jsonl
@@ -1153,7 +1156,21 @@ func (i *Instance) buildCodexCommand(baseCommand string) string {
 
 	yoloFlag := i.resolveCodexYoloFlag()
 	command := i.resolveCodexCommand(baseCommand)
-	codexHome := getCodexHomeDirForCommand(command)
+
+	// Resolve CODEX_HOME: command-prefix wins (explicit inline override).
+	// Otherwise, check profile/global config_dir and inject CODEX_HOME if it
+	// differs from the ambient env/default so codex picks up the right home.
+	var codexHome string
+	if home := codexHomeFromCommand(command); home != "" {
+		codexHome = home
+	} else {
+		resolved := GetCodexHomeDirForInstance(i)
+		if resolved != getCodexHomeDir() {
+			// Profile/global config_dir differs from ambient — inject it.
+			envPrefix += fmt.Sprintf("CODEX_HOME=%s ", resolved)
+		}
+		codexHome = resolved
+	}
 
 	// Issue #756: Gate `codex resume <sid>` on rollout-file existence.
 	// If Codex died before flushing its rollout JSONL (tmux crash, kill -9

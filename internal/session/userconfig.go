@@ -245,6 +245,8 @@ func (rc RemoteConfig) GetProfile() string {
 type ProfileSettings struct {
 	// Claude defines Claude Code overrides for a specific profile.
 	Claude ProfileClaudeSettings `toml:"claude"`
+	// Codex defines Codex CLI overrides for a specific profile.
+	Codex ProfileCodexSettings `toml:"codex"`
 	// Costs defines profile-specific cost-tracking overrides.
 	// Nil pointer means "no [profiles.<name>.costs] block in TOML"; the
 	// resolver falls through to global [costs] settings.
@@ -254,6 +256,12 @@ type ProfileSettings struct {
 // ProfileClaudeSettings defines profile-specific Claude overrides.
 type ProfileClaudeSettings struct {
 	// ConfigDir overrides [claude].config_dir for this profile only.
+	ConfigDir string `toml:"config_dir"`
+}
+
+// ProfileCodexSettings defines profile-specific Codex overrides.
+type ProfileCodexSettings struct {
+	// ConfigDir sets CODEX_HOME for codex sessions in this profile.
 	ConfigDir string `toml:"config_dir"`
 }
 
@@ -714,6 +722,18 @@ func (c *UserConfig) GetProfileClaudeConfigDir(profile string) string {
 	return ExpandPath(profileCfg.Claude.ConfigDir)
 }
 
+// GetProfileCodexConfigDir returns the profile-specific Codex config directory (CODEX_HOME), if configured.
+func (c *UserConfig) GetProfileCodexConfigDir(profile string) string {
+	if c == nil || profile == "" || c.Profiles == nil {
+		return ""
+	}
+	profileCfg, ok := c.Profiles[profile]
+	if !ok || profileCfg.Codex.ConfigDir == "" {
+		return ""
+	}
+	return ExpandPath(profileCfg.Codex.ConfigDir)
+}
+
 // GetGroupClaudeConfigDir returns the group-specific Claude config directory, if configured.
 func (c *UserConfig) GetGroupClaudeConfigDir(groupPath string) string {
 	if c == nil || groupPath == "" || c.Groups == nil {
@@ -828,6 +848,11 @@ type CodexSettings struct {
 	// YoloMode enables --yolo flag for Codex sessions (bypass approvals and sandbox)
 	// Default: false
 	YoloMode bool `toml:"yolo_mode"`
+
+	// ConfigDir sets CODEX_HOME globally for all codex sessions.
+	// Profile-level [profiles.<name>.codex].config_dir overrides this.
+	// Default: "" (uses CODEX_HOME env var or ~/.codex)
+	ConfigDir string `toml:"config_dir"`
 }
 
 // CopilotSettings defines GitHub Copilot CLI configuration (Issue #556).

@@ -4223,3 +4223,149 @@ func TestInstance_RefreshLiveSessionIDs_NoOpForNonAgenticTool(t *testing.T) {
 		t.Errorf("GeminiSessionID mutated for non-agentic tool: got %q", inst.GeminiSessionID)
 	}
 }
+
+func TestBuildCodexCommand_ProfileConfigDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileCodexHome := filepath.Join(tmpDir, ".codex-minimal")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	origCodexHome := os.Getenv("CODEX_HOME")
+	os.Unsetenv("CODEX_HOME")
+	defer func() {
+		if origCodexHome != "" {
+			_ = os.Setenv("CODEX_HOME", origCodexHome)
+		}
+	}()
+
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	os.Setenv("AGENTDECK_PROFILE", "minimal")
+	defer func() {
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		} else {
+			_ = os.Unsetenv("AGENTDECK_PROFILE")
+		}
+	}()
+
+	ClearUserConfigCache()
+	defer ClearUserConfigCache()
+
+	cfg := &UserConfig{
+		Profiles: map[string]ProfileSettings{
+			"minimal": {
+				Codex: ProfileCodexSettings{ConfigDir: profileCodexHome},
+			},
+		},
+	}
+	if err := SaveUserConfig(cfg); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	ClearUserConfigCache()
+
+	inst := NewInstanceWithTool("codex-minimal-session", "/tmp/project", "codex")
+	cmd := inst.buildCodexCommand("codex")
+
+	if !strings.Contains(cmd, "CODEX_HOME="+profileCodexHome) {
+		t.Fatalf("expected CODEX_HOME=%s in command, got %q", profileCodexHome, cmd)
+	}
+}
+
+func TestBuildCodexCommand_GlobalCodexConfigDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	globalCodexHome := filepath.Join(tmpDir, ".codex-global")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	origCodexHome := os.Getenv("CODEX_HOME")
+	os.Unsetenv("CODEX_HOME")
+	defer func() {
+		if origCodexHome != "" {
+			_ = os.Setenv("CODEX_HOME", origCodexHome)
+		}
+	}()
+
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	_ = os.Unsetenv("AGENTDECK_PROFILE")
+	defer func() {
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		}
+	}()
+
+	ClearUserConfigCache()
+	defer ClearUserConfigCache()
+
+	cfg := &UserConfig{
+		Codex: CodexSettings{ConfigDir: globalCodexHome},
+	}
+	if err := SaveUserConfig(cfg); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	ClearUserConfigCache()
+
+	inst := NewInstanceWithTool("codex-global-session", "/tmp/project", "codex")
+	cmd := inst.buildCodexCommand("codex")
+
+	if !strings.Contains(cmd, "CODEX_HOME="+globalCodexHome) {
+		t.Fatalf("expected CODEX_HOME=%s in command, got %q", globalCodexHome, cmd)
+	}
+}
+
+func TestBuildCodexCommand_InlineCodexHomeBeatsProfileConfigDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	profileCodexHome := filepath.Join(tmpDir, ".codex-profile")
+	inlineCodexHome := filepath.Join(tmpDir, ".codex-inline")
+
+	origHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", origHome)
+
+	origCodexHome := os.Getenv("CODEX_HOME")
+	os.Unsetenv("CODEX_HOME")
+	defer func() {
+		if origCodexHome != "" {
+			_ = os.Setenv("CODEX_HOME", origCodexHome)
+		}
+	}()
+
+	origProfile := os.Getenv("AGENTDECK_PROFILE")
+	os.Setenv("AGENTDECK_PROFILE", "test")
+	defer func() {
+		if origProfile != "" {
+			_ = os.Setenv("AGENTDECK_PROFILE", origProfile)
+		} else {
+			_ = os.Unsetenv("AGENTDECK_PROFILE")
+		}
+	}()
+
+	ClearUserConfigCache()
+	defer ClearUserConfigCache()
+
+	cfg := &UserConfig{
+		Profiles: map[string]ProfileSettings{
+			"test": {
+				Codex: ProfileCodexSettings{ConfigDir: profileCodexHome},
+			},
+		},
+	}
+	if err := SaveUserConfig(cfg); err != nil {
+		t.Fatalf("SaveUserConfig: %v", err)
+	}
+	ClearUserConfigCache()
+
+	// Instance command has inline CODEX_HOME= prefix — this should win
+	inst := NewInstanceWithTool("codex-inline", "/tmp/project", "codex")
+	cmd := inst.buildCodexCommand("CODEX_HOME=" + inlineCodexHome + " codex")
+
+	if !strings.Contains(cmd, "CODEX_HOME="+inlineCodexHome) {
+		t.Fatalf("inline CODEX_HOME should win over profile config_dir, got %q", cmd)
+	}
+	if strings.Contains(cmd, profileCodexHome) {
+		t.Fatalf("profile config_dir should not appear when inline CODEX_HOME is set, got %q", cmd)
+	}
+}
