@@ -577,6 +577,28 @@ func (m *MCPDialog) Apply() error {
 		return nil
 	}
 
+	if session.IsCodexCompatible(m.tool) {
+		// Codex: Only local scope; write to both .mcp.json (source of truth for
+		// future regenerateMCPConfig runs) and .codex/config.toml (so the
+		// current restart picks up changes without needing a regeneration step).
+		if m.localChanged {
+			enabledNames := make([]string, len(m.localAttached))
+			for i, item := range m.localAttached {
+				enabledNames[i] = item.Name
+			}
+			if err := session.WriteMCPJsonFromConfig(m.projectPath, enabledNames); err != nil {
+				m.err = err
+				return err
+			}
+			if err := session.WriteCodexConfig(m.projectPath, enabledNames); err != nil {
+				m.err = err
+				return err
+			}
+			session.ClearMCPCache(m.projectPath)
+		}
+		return nil
+	}
+
 	// Claude: Apply LOCAL changes
 	if m.localChanged {
 		// Get names of attached MCPs
